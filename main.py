@@ -18,11 +18,16 @@ from utils import progress_bar
 
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
-parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
+parser.add_argument('--lr', default=0.01, type=float, help='learning rate')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
+parser.add_argument('--model', '-m', default='vgg19', type=str, help='model architecture')
+parser.add_argument('--gpu', '-g', default='0,1,2', type=str, help='use gpu(s)')
+
 args = parser.parse_args()
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
+device = 'cuda' if torch.cuda.is_available() and args.gpu else 'cpu'
+
 best_acc = 0  # best test accuracy
 start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 
@@ -44,13 +49,24 @@ trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=128, shuffle=True, num_workers=2)
 
 testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
-testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=2)
+testloader = torch.utils.data.DataLoader(testset, batch_size=1000, shuffle=False, num_workers=2)
 
 classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
 # Model
-print('==> Building model..')
-# net = VGG('VGG19')
+net_name = args.model.lower()
+print('==> Building model %s..'%net_name)
+if net_name == 'vgg19':
+    net = VGG('VGG19')
+elif net_name == 'vgg16':
+    net = VGG('VGG16')
+elif net_name == 'vgg13':
+    net = VGG('VGG13')
+elif net_name == 'vgg11':
+    net = VGG('VGG11')
+else:
+    raise NotImplemented
+
 # net = ResNet18()
 # net = PreActResNet18()
 # net = GoogLeNet()
@@ -61,7 +77,7 @@ print('==> Building model..')
 # net = DPN92()
 # net = ShuffleNetG2()
 # net = SENet18()
-net = ShuffleNetV2(1)
+
 net = net.to(device)
 if device == 'cuda':
     net = torch.nn.DataParallel(net)
@@ -70,11 +86,14 @@ if device == 'cuda':
 if args.resume:
     # Load checkpoint.
     print('==> Resuming from checkpoint..')
-    assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
-    checkpoint = torch.load('./checkpoint/ckpt.t7')
-    net.load_state_dict(checkpoint['net'])
-    best_acc = checkpoint['acc']
-    start_epoch = checkpoint['epoch']
+    if not os.path.exists('./checkpoint/%s/ckpt.t7'%net_name):
+        print('Warning: no checkpoint directory found! Training from scratch..')
+    else:
+    #     assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
+        checkpoint = torch.load('./checkpoint/%s/ckpt.t7'%net_name)
+        net.module.load_state_dict(checkpoint['net'])
+        best_acc = checkpoint['acc']
+        start_epoch = checkpoint['epoch']
 
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
@@ -126,14 +145,19 @@ def test(epoch):
     acc = 100.*correct/total
     if acc > best_acc:
         print('Saving..')
+        if 'module' in net._modules.keys():
+            net_save = net.module
+        else:
+            net_save = net
         state = {
-            'net': net.state_dict(),
+            'net': net_save.state_dict(),
             'acc': acc,
             'epoch': epoch,
+            'cfg': net_save.cfg
         }
-        if not os.path.isdir('checkpoint'):
-            os.mkdir('checkpoint')
-        torch.save(state, './checkpoint/ckpt.t7')
+        if not os.path.isdir('checkpoint/%s'%net_name):
+            os.mkdir('checkpoint/%s'%net_name)
+        torch.save(state, './checkpoint/%s/ckpt.t7'%net_name)
         best_acc = acc
 
 
